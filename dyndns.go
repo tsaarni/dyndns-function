@@ -1,13 +1,14 @@
-package functions
+package dyndns
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
+
 	"os"
 	"strings"
 
-	"golang.org/x/net/context"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/dns/v1"
 )
@@ -19,6 +20,7 @@ var zone = os.Getenv("CLOUDDNS_ZONE")
 // Update Google Cloud DNS with given hostname and IP address of originating request
 func Update(w http.ResponseWriter, r *http.Request) {
 
+	// get the caller's IP address
 	addr := r.Header.Get("X-Forwarded-For")
 	if addr == "" {
 		addr, _, _ = net.SplitHostPort(r.RemoteAddr)
@@ -26,7 +28,7 @@ func Update(w http.ResponseWriter, r *http.Request) {
 
 	hostname := r.URL.Query().Get("hostname") + "."
 	if hostname == "." {
-		http.Error(w, "Error: query parameter 'hostname' missing", http.StatusInternalServerError)
+		http.Error(w, "Error: missing query parameter: 'hostname'", http.StatusInternalServerError)
 		return
 	}
 
@@ -35,28 +37,30 @@ func Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// create client with default service account credentials set by the runtime environment
 	ctx := context.Background()
 
 	c, err := google.DefaultClient(ctx, dns.CloudPlatformScope)
 	if err != nil {
-		http.Error(w, "Error initializing service account", http.StatusInternalServerError)
+		http.Error(w, "Error: failed to initialize client", http.StatusInternalServerError)
 		return
 	}
 
 	dnsService, err := dns.New(c)
 	if err != nil {
-		http.Error(w, "Error initializing client", http.StatusInternalServerError)
+		http.Error(w, "Error: failed to initialize DNS client", http.StatusInternalServerError)
 		return
 	}
 
-	// get existing resource record (to be updated, may be empty if record is being created for first time
+	// get existing resource record to be updated, result may be empty
+	// if record is being created for first time
 	rrs, err := dnsService.ResourceRecordSets.List(project, zone).Name(hostname).Do()
 	if err != nil {
-		http.Error(w, "Error fetching existing records", http.StatusInternalServerError)
+		http.Error(w, "Error: failed to fetch existing resource record", http.StatusInternalServerError)
 		return
 	}
 
-	// update resource record
+	// update resource record with the new address
 	rb := &dns.Change{
 		Deletions: rrs.Rrsets,
 		Additions: []*dns.ResourceRecordSet{
@@ -70,9 +74,12 @@ func Update(w http.ResponseWriter, r *http.Request) {
 
 	_, err = dnsService.Changes.Create(project, zone, rb).Context(ctx).Do()
 	if err != nil {
-		http.Error(w, "Error updaing records", http.StatusInternalServerError)
+		http.Error(w, "Error: failed to update resource record", http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Fprintf(w, "Updated DNS with hostname=%s and IP=%s", hostname, addr)
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, "{\n    \"hostname\": \"%s\",\n    \"address\": \"%s\"\n}\n",
+		strings.TrimSuffix(hostname, "."),
+		addr)
 }

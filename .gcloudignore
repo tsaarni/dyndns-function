@@ -1,0 +1,9 @@
+# https://cloud.google.com/sdk/gcloud/reference/topic/gcloudignore
+
+# by default, ignore all files
+/[!.]*
+/.?*
+
+# explicitely include following files
+!/go.mod
+!/dyndns.go
