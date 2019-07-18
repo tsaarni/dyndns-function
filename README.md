@@ -55,12 +55,16 @@ gcloud iam service-accounts keys create gcp-dyndns-client-serviceaccount.json \
 ```
 
 
-Prepare environment variable file
+Prepare configuration file
 
 ```
-cat > .env.yaml <<EOF
-CLOUDDNS_DOMAIN: example.com.
-CLOUDDNS_ZONE: myzone
+cat > configuration.json <<'EOF'
+{
+    "clouddns_zone": "myzone",
+    "allowed_hosts": [
+        ".+\\.example.com$"
+    ]
+}
 EOF
 ```
 
@@ -71,7 +75,6 @@ the credentials of `dyndns-function`.
 
 ```
 gcloud functions deploy Update \
-  --env-vars-file .env.yaml \
   --runtime go111 --trigger-http \
   --service-account dyndns-function@${GCP_PROJECT}.iam.gserviceaccount.com
 ```
@@ -170,7 +173,7 @@ cat <<EOF | jwt -key dyndns-client-key.pem -alg RS256 -sign - > jwt-token
     "iss": "dyndns-client@${GCP_PROJECT}.iam.gserviceaccount.com",
     "aud": "https://www.googleapis.com/oauth2/v4/token",
     "target_audience": "${CLOUD_FUNCTION_TRIGGER_URL}",
-    "exp": $(date -d "now 1 hour" +%s),
+    "exp": $(($(date +%s) + 60*60)),
     "iat": $(date +%s)
 }
 EOF
@@ -225,19 +228,17 @@ gcloud iam service-accounts keys create gcp-dyndns-function-serviceaccount.json 
 ```
 
 
-Set the environment variables
+Set the environment variable
 
 ```
 export GOOGLE_APPLICATION_CREDENTIALS=gcp-dyndns-function-serviceaccount.json
-export CLOUDDNS_DOMAIN=example.com.
-export CLOUDDNS_ZONE=myzone
 ```
 
 
 Build and execute the server
 
 ```
-go build && ./dyndns-function
+go build ./cmd/test-server && ./test-server
 ```
 
 

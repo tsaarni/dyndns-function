@@ -1,10 +1,12 @@
-package dyndns
+package main
 
 import (
 	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
+
+	"github.com/tsaarni/dyndns"
 )
 
 var listen = "127.0.0.1:8080"
@@ -39,7 +41,7 @@ func main() {
 		Transport: http.DefaultTransport,
 	}
 
-	http.HandleFunc("/Update", Update)
+	http.HandleFunc("/Update", dyndns.Update)
 	fmt.Printf("Listening for incoming requests http://%s\n", listen)
 	http.ListenAndServe(listen, nil)
 }

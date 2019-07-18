@@ -1,4 +1,4 @@
-module github.com/tsaarni/dyndns-function
+module github.com/tsaarni/dyndns
 
 go 1.11
 

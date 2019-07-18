@@ -7,3 +7,4 @@
 # explicitely include following files
 !/go.mod
 !/dyndns.go
+!/configuration.json
