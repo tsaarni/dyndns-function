@@ -247,3 +247,63 @@ Make request to `Update` endpoint
 ```
 http "http://localhost:8080/Update?hostname=test.example.com"
 ```
+
+
+## Python client
+
+File [dyndns-function-client.py](dyndns-function-client.py) implements a client that requests dyndns-function to update a DNS entry.
+Following instructions show how to run it periodically from systemd:
+
+1\. Clone this repository `git clone https://github.com/tsaarni/dyndns-function.git`
+
+2\. Generate `dyndns-client-key.pem` according to the instructions in "Using the API to update DNS entries" section above.
+
+3\. Update [client-config.ini](client-config.ini) file to match with your settings.
+
+4\. Create Python "virtual environment" and install required modules
+
+```
+python3 -mvenv venv
+. venv/bin/activate
+pip install -r requirements.txt
+```
+
+5\. Create systemd service
+
+```bash
+sudo bash -c "cat > /etc/systemd/system/dyndns.service" <<EOF
+[Unit]
+Description=Register IP address to dyndns-function
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/dyndns-function/
+ExecStart=/path/to/dyndns-function/venv/bin/python dyndns-function-client.py client-config.ini
+EOF
+```
+
+6\. Create timer for the service
+
+```bash
+sudo bash -c "cat > /etc/systemd/system/dyndns.timer" <<EOF
+[Unit]
+Description=Daily update of IP address to dyndns-function
+
+[Timer]
+OnBootSec=15min
+OnCalendar=daily
+AccuracySec=1h
+Persistent=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+7\. Start the timer
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start dyndns.timer
+sudo systemctl status dyndns.{service,timer}
+```
