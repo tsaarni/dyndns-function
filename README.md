@@ -1,40 +1,35 @@
-
 # Dyndns clone for Google Cloud DNS
 
-This project uses Google Cloud Functions to update the IP address of a given
-host in Cloud DNS via a simple HTTP based API.  The update is done by sending
-following request:
+This project uses Google Cloud Functions to update the IP address of a given host in Cloud DNS via a simple HTTP based API.
+The update is done by sending following request:
 
-    https://<YOUR_REGION-YOUR_PROJECT_ID>.cloudfunctions.net/Update?hostname=myserver.example.com
+```
+https://<YOUR_REGION-YOUR_PROJECT_ID>.cloudfunctions.net/Update?hostname=myserver.example.com
+```
 
-The hostname is given as query parameter `hostname` and the IP address is
-automatically taken from the HTTP request.
+The hostname is given as query parameter `hostname` and the IP address is automatically taken from the HTTP request.
 
-The function must be configured with proper access control since it has
-privileges to update Google Cloud DNS (see Deploy below). The client
-authenticates with bearer token `Authorization: Bearer NNN`.
-
+The function must be configured with proper access control since it has privileges to update Google Cloud DNS (see below).
+The client authenticates with bearer token `Authorization: Bearer NNN`.
 
 ## Deployment
 
-Get the active project name
+Get the active project name and default region
 
-```
+```bash
 export GCP_PROJECT=$(gcloud config get-value project)
+export GCP_REGION=$(gcloud config get-value compute/region) # Uses default region
+gcloud config set functions/region $GCP_REGION # Set default region for Cloud Functions
 ```
 
+We will create two service accounts:
 
-We will need two service accounts:
+- `dyndns-function` for the function running in Cloud Functions, acting as Cloud DNS client and updating the DNS records.
+- `dyndns-client` for the external client making dynamic DNS updates in a host with dynamically allocated IP address.
 
-* `dyndns-function` for the function running in Cloud Functions, running
-   CloudDNS client
-* `dyndns-client` for the external client making dynamic DNS updates in a host
-   with dynamically allocated IP address
+Create the service accounts:
 
-
-Create the service accounts
-
-```
+```bash
 gcloud iam service-accounts create dyndns-function \
   --display-name=dyndns-function \
   --project=${GCP_PROJECT}
@@ -44,20 +39,9 @@ gcloud iam service-accounts create dyndns-client \
   --project=${GCP_PROJECT}
 ```
 
+Prepare configuration file for the cloud function:
 
-Create key for the `dyndns-client`.  The key will be used to create access tokens
-for requests towards the REST API:
-
-```
-gcloud iam service-accounts keys create gcp-dyndns-client-serviceaccount.json \
-  --iam-account=dyndns-client@${GCP_PROJECT}.iam.gserviceaccount.com \
-  --project=${GCP_PROJECT}
-```
-
-
-Prepare configuration file
-
-```
+```bash
 cat > configuration.json <<'EOF'
 {
     "clouddns_zone": "myzone",
@@ -68,207 +52,95 @@ cat > configuration.json <<'EOF'
 EOF
 ```
 
+Deploy the function at `Update` endpoint and set `dyndns-function` service account for it.
+When this function is executed, it will automatically receive the credentials of `dyndns-function`.
 
-Deploy the function at `Update` endpoint and set `dyndns-function` service
-account for it.  When this function is executed, it will automatically receive
-the credentials of `dyndns-function`.
-
-```
+```bash
 gcloud functions deploy Update \
-  --runtime go111 --trigger-http \
-  --service-account dyndns-function@${GCP_PROJECT}.iam.gserviceaccount.com
+  --gen2 \
+  --runtime=go121 \
+  --region=$GCP_REGION \
+  --source=. \
+  --entry-point=Update \
+  --trigger-http \
+  --service-account dyndns-function@${GCP_PROJECT}.iam.gserviceaccount.com \
+  --set-env-vars CONFIGURATION=serverless_function_source_code/configuration.json,GCP_PROJECT=${GCP_PROJECT}
 ```
 
-Aftrer successful deploy, the URL for the Cloud Function is printed.
-Currently Cloud Functions are publicly accessible by any unauthenticated client.
-This will change in future according to following Google Cloud announcement
+Answer `n` to question "Allow unauthenticated invocations of new function".
 
-> After November 1, 2019, newly created functions will be private-by-default, and will only be invocable by authorized clients unless you set a public IAM policy on the function
+After successful deployment, the URL for the Cloud Function is printed.
 
-For now, to enable authentication remove the `roles/cloudfunctions.invoker`
-role from `allUsers` and adding the role to `dyndns-client` instead:
+Grant `dyndns-client` service account access to the `Update` endpoint:
 
-```
-gcloud beta functions remove-iam-policy-binding Update \
-  --member=allUsers \
-  --role=roles/cloudfunctions.invoker
-
-gcloud beta functions add-iam-policy-binding Update \
+```bash
+gcloud functions add-invoker-policy-binding Update \
   --member="serviceAccount:dyndns-client@${GCP_PROJECT}.iam.gserviceaccount.com" \
-  --role="roles/cloudfunctions.invoker"
+  --region="${GCP_REGION}"
 ```
 
+Verify that access policy for `Update` endpoint was updated:
 
-Verify that access policy for `Update` endpoint was updated
-
-```
-gcloud beta functions get-iam-policy Update
-```
-
-See [here](https://cloud.google.com/functions/docs/securing/managing-access)
-for more information about IAM and Cloud Functions.
-
-> **WARNING**: Wait for a moment for the access policy to be applied and double check that anonymous requests are now rejected!
-
-```
-export CLOUD_FUNCTION_TRIGGER_URL=$(gcloud functions describe Update --format='value(httpsTrigger.url)')
-http "${CLOUD_FUNCTION_TRIGGER_URL}"  # this should result in: 403 Forbidden
+```bash
+gcloud run services get-iam-policy projects/$GCP_PROJECT/locations/$GCP_REGION/services/update
 ```
 
+Try to make unauthenticated request to the `Update` endpoint.
+This should result in `403 Forbidden` response.
 
-Next we are granting Cloud DNS admin privileges for the Cloud Function to
-operate on resource records Cloud DNS.  Add `dyndns-function` as member of
-`roles/dns.admin` role
-
+```bash
+http $(gcloud functions describe Update --format='value(url)')
 ```
+
+Next grant Cloud DNS admin privileges for the Cloud Function to operate on resource records Cloud DNS.
+Add `dyndns-function` as member of `roles/dns.admin` role:
+
+```bash
 gcloud projects add-iam-policy-binding ${GCP_PROJECT} \
   --member="serviceAccount:dyndns-function@${GCP_PROJECT}.iam.gserviceaccount.com" \
   --role=roles/dns.admin
 ```
 
+Wait for few seconds and verify that `dyndns-function` is included as member of `roles/dns.admin`:
 
-Wait for few seconds and verify that `dyndns-function` is included as member
-of `roles/dns.admin`
-
-```
+```bash
 gcloud projects get-iam-policy ${GCP_PROJECT}
 ```
 
+## Using the updater client to set DNS entries
 
-## Using the API to update DNS entries
+Compile the client:
 
-The requests to the `Update` API endpoint need to be authorized by JWT
-access token.  Install [jwt-go](https://github.com/dgrijalva/jwt-go) to
-generate JWTs
-
-```
-go get -u github.com/dgrijalva/jwt-go/cmd/jwt
+```bash
+go build ./cmd/updater/
 ```
 
+Create key for the `dyndns-client` service account.
 
-The instructions are based on
-[Service-to-function authentication](https://cloud.google.com/functions/docs/securing/authenticating#service-to-function)
-
-Set the HTTP trigger URL for the Cloud Function into environment variable
-
-```
-export CLOUD_FUNCTION_TRIGGER_URL=$(gcloud functions describe Update --format='value(httpsTrigger.url)')
-```
-
-
-Extract `private_key` from service account key file (example uses
-[jq](https://stedolan.github.io/jq/) to extract the key)
-
-```
-cat gcp-dyndns-client-serviceaccount.json | jq -r .private_key > dyndns-client-key.pem
-```
-
-
-Create self-signed JWT token for authenticating the client towards Google's
-`token` endpoint
-
-```
-cat <<EOF | jwt -key dyndns-client-key.pem -alg RS256 -sign - > jwt-token
-{
-    "iss": "dyndns-client@${GCP_PROJECT}.iam.gserviceaccount.com",
-    "aud": "https://www.googleapis.com/oauth2/v4/token",
-    "target_audience": "${CLOUD_FUNCTION_TRIGGER_URL}",
-    "exp": $(($(date +%s) + 60*60)),
-    "iat": $(date +%s)
-}
-EOF
-```
-
-
-Make request for a `id_token` from the `token` endpoint (example uses
-[httpie](https://httpie.org/) as client)
-
-```
-http -v POST https://www.googleapis.com/oauth2/v4/token \
-   grant_type="urn:ietf:params:oauth:grant-type:jwt-bearer" \
-   assertion=@jwt-token
-```
-
-
-Finally copy the `id_token` from the response and use it as Bearer token in th
-request to `Update` endpoint
-
-```
-http "${CLOUD_FUNCTION_TRIGGER_URL}?hostname=myserver.example.com" Authorization:"Bearer <ID_TOKEN>"
-```
-
-
-Both self-signed JWT token and `id_token` are valid for hour.  After that, the
-process must be repeated.
-
-
-Alternatively the `id_token` can be creted with Google Cloud SDK
-
-```
-gcloud auth print-identity-token dyndns-client@${GCP_PROJECT}.iam.gserviceaccount.com \
-  --audiences="${CLOUD_FUNCTION_TRIGGER_URL}"
-```
-
-
-## Local development and testing
-
-Following instructions are meant for testing the code locally.
-
-> **NOTE**: The local web server will not authenticate the client but it will only accept requests from localhost
-
-
-Generate key file for `dyndns-function` to let
-[Google API client library for Go](https://cloud.google.com/dns/docs/libraries)
-to call [Cloud DNS API](https://cloud.google.com/dns/docs/reference/v1/)
-
-```
-gcloud iam service-accounts keys create gcp-dyndns-function-serviceaccount.json \
-  --iam-account=dyndns-function@${GCP_PROJECT}.iam.gserviceaccount.com \
+```bash
+gcloud iam service-accounts keys create gcp-dyndns-client-serviceaccount.json \
+  --iam-account=dyndns-client@${GCP_PROJECT}.iam.gserviceaccount.com \
   --project=${GCP_PROJECT}
 ```
 
+The key will be used by the client to create short-lived access tokens for requests towards the REST API.
 
-Set the environment variable
+Run the client:
 
-```
-export GOOGLE_APPLICATION_CREDENTIALS=gcp-dyndns-function-serviceaccount.json
-```
-
-
-Build and execute the server
-
-```
-go build ./cmd/test-server && ./test-server
+```bash
+./updater --hostname=myserver.example.com --key-file=gcp-dyndns-client-serviceaccount.json --function-url=<YOUR_REGION-YOUR_PROJECT_ID>.cloudfunctions.net/Update
 ```
 
+where `<YOUR_REGION-YOUR_PROJECT_ID>` is the region and project ID where the Cloud Function was deployed.
+Run following command to get the URL:
 
-Make request to `Update` endpoint
-
-```
-http "http://localhost:8080/Update?hostname=test.example.com"
-```
-
-
-## Python client
-
-File [dyndns-function-client.py](dyndns-function-client.py) implements a client that requests dyndns-function to update a DNS entry.
-Following instructions show how to run it periodically from systemd:
-
-1\. Clone this repository `git clone https://github.com/tsaarni/dyndns-function.git`
-
-2\. Generate `dyndns-client-key.pem` according to the instructions in "Using the API to update DNS entries" section above.
-
-3\. Update [client-config.ini](client-config.ini) file to match with your settings.
-
-4\. Create Python "virtual environment" and install required modules
-
-```
-python3 -mvenv venv
-. venv/bin/activate
-pip install -r requirements.txt
+```bash
+gcloud functions describe Update --format='value(url)'
 ```
 
-5\. Create systemd service
+### Run updater client periodically as systemd service
+
+1\. Create systemd service
 
 ```bash
 sudo bash -c "cat > /etc/systemd/system/dyndns.service" <<EOF
@@ -277,12 +149,11 @@ Description=Register IP address to dyndns-function
 
 [Service]
 Type=oneshot
-WorkingDirectory=/path/to/dyndns-function/
-ExecStart=/path/to/dyndns-function/venv/bin/python dyndns-function-client.py client-config.ini
+ExecStart=/path/to/updater --hostname=myserver.example.com --key-file=/path/to/gcp-dyndns-client-serviceaccount.json --function-url=<YOUR_REGION-YOUR_PROJECT_ID>.cloudfunctions.net/Update
 EOF
 ```
 
-6\. Create timer for the service
+2\. Create timer for the service
 
 ```bash
 sudo bash -c "cat > /etc/systemd/system/dyndns.timer" <<EOF
@@ -300,10 +171,43 @@ WantedBy=multi-user.target
 EOF
 ```
 
-7\. Start the timer
+3\. Start the timer
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl start dyndns.timer
 sudo systemctl status dyndns.{service,timer}
+```
+
+## Local development and testing
+
+Following instructions are meant for testing the code locally.
+
+> **NOTE**: The local web server will not authenticate the client but it will only accept requests from localhost
+
+Generate key file for `dyndns-function` to let [Google API client library for Go](https://cloud.google.com/dns/docs/libraries) to call [Cloud DNS API](https://cloud.google.com/dns/docs/reference/v1/).
+
+```bash
+gcloud iam service-accounts keys create gcp-dyndns-function-serviceaccount.json \
+ --iam-account=dyndns-function@${GCP_PROJECT}.iam.gserviceaccount.com \
+  --project=${GCP_PROJECT}
+```
+
+Set the environment variable:
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=gcp-dyndns-function-serviceaccount.json
+```
+
+Make sure that current directory has `configuration.json` configuration file (created above).
+Run the server:
+
+```bash
+go run ./cmd/test-server/
+```
+
+Make request to `Update` endpoint
+
+```
+http "http://localhost:8080/Update?hostname=test.example.com"
 ```

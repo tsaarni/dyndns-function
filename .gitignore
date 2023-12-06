@@ -13,6 +13,5 @@
 
 *.pem
 *.json
-jwt-token
 .env.yaml
-configuration.json
+updater

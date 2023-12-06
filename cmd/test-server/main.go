@@ -1,47 +1,22 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"net/http"
-	"net/http/httputil"
+	"os"
 
-	"github.com/tsaarni/dyndns"
+	"github.com/GoogleCloudPlatform/functions-framework-go/funcframework"
+	_ "github.com/tsaarni/dyndns" // Blank import to register the function.
 )
 
-var listen = "127.0.0.1:8080"
-
-type LoggingTransport struct {
-	Transport http.RoundTripper
-}
-
-func debug(data []byte, err error) {
-	if err == nil {
-		fmt.Printf("%s\n\n", data)
-	} else {
-		log.Fatalf("%s\n\n", err)
-	}
-}
-
-func (t *LoggingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	debug(httputil.DumpRequestOut(req, true))
-
-	resp, err := t.Transport.RoundTrip(req)
-	if err != nil {
-		return resp, err
-	}
-
-	debug(httputil.DumpResponse(resp, true))
-
-	return resp, err
-}
-
 func main() {
-	http.DefaultTransport = &LoggingTransport{
-		Transport: http.DefaultTransport,
+	// Use PORT environment variable, or default to 8080.
+	port := "8080"
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		port = envPort
 	}
 
-	http.HandleFunc("/Update", dyndns.Update)
-	fmt.Printf("Listening for incoming requests http://%s\n", listen)
-	http.ListenAndServe(listen, nil)
+	if err := funcframework.StartHostPort("127.0.0.1", port); err != nil {
+		log.Fatalf("funcframework.StartHostPort: %v\n", err)
+	}
+
 }

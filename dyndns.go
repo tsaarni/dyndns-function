@@ -1,23 +1,35 @@
+// Package dyndns provides functionality for updating DNS records on Google Cloud DNS.
+// It uses the Google Cloud DNS API to perform these updates.
+// The package is configured via environment variables and a configuration file.
+// It is intended to be used as a Cloud Function, with the entry point being the Update function.
+
 package dyndns
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"regexp"
 
-	"golang.org/x/oauth2/google"
+	"github.com/GoogleCloudPlatform/functions-framework-go/functions"
 	"google.golang.org/api/dns/v1"
 )
-
-var project = os.Getenv("GCP_PROJECT")
 
 type configuration struct {
 	Zone         string   `json:"clouddns_zone"`
 	AllowedHosts []string `json:"allowed_hosts"`
+}
+
+type Response struct {
+	Hostname string `json:"hostname"`
+	Address  string `json:"address"`
+}
+
+func init() {
+	functions.HTTP("Update", Update)
 }
 
 func readConfiguration(filename string) (*configuration, error) {
@@ -35,16 +47,28 @@ func readConfiguration(filename string) (*configuration, error) {
 	return &conf, nil
 }
 
-// Update Google Cloud DNS with given hostname and IP address of originating request
+// Update Google Cloud DNS with given hostname and IP address of originating request.
 func Update(w http.ResponseWriter, r *http.Request) {
+	configFile := os.Getenv("CONFIGURATION")
+	if configFile == "" {
+		configFile = "configuration.json"
+	}
 
-	conf, err := readConfiguration("configuration.json")
+	project := os.Getenv("GCP_PROJECT")
+	if project == "" {
+		slog.Error("Error: missing environment variable: 'GCP_PROJECT'")
+		http.Error(w, "Error: missing configuration", http.StatusInternalServerError)
+		return
+	}
+
+	conf, err := readConfiguration(configFile)
 	if err != nil {
+		slog.Error("Error reading configuration file", "error", err)
 		http.Error(w, "Error: cannot read configuration file", http.StatusInternalServerError)
 		return
 	}
 
-	// get the caller's IP address
+	// Get the caller's IP address.
 	addr := r.Header.Get("X-Forwarded-For")
 	if addr == "" {
 		addr, _, _ = net.SplitHostPort(r.RemoteAddr)
@@ -53,54 +77,56 @@ func Update(w http.ResponseWriter, r *http.Request) {
 	hostname := r.URL.Query().Get("hostname")
 
 	if hostname == "" {
-		http.Error(w, "Error: missing query parameter: 'hostname'", http.StatusInternalServerError)
+		http.Error(w, "Error: missing query parameter: 'hostname'", http.StatusBadRequest)
 		return
 	}
+
+	slog.Info("Update request", "hostname", hostname, "address", addr)
 
 	matched := false
 	for _, pattern := range conf.AllowedHosts {
 		matched, err = regexp.MatchString(pattern, hostname)
-		if matched == true {
+		if err != nil {
+			slog.Error("Error matching hostname", "error", err)
+			http.Error(w, "Error: error matching hostname", http.StatusInternalServerError)
+			return
+		}
+		if matched {
 			break
 		}
 	}
 
-	if matched == false {
-		http.Error(w, "Error: hostname does not match required domain", http.StatusInternalServerError)
+	if !matched {
+		slog.Error("Hostname does not match required domain", "hostname", hostname)
+		http.Error(w, "Error: hostname does not match required domain", http.StatusBadRequest)
 		return
 	}
 
-	// create client with default service account credentials set by the runtime environment
-	ctx := context.Background()
-
-	c, err := google.DefaultClient(ctx, dns.CloudPlatformScope)
-	if err != nil {
-		http.Error(w, "Error: failed to initialize client", http.StatusInternalServerError)
-		return
-	}
-
-	// add final period to make fully qualified domain name
+	// Add final period to make fully qualified domain name.
 	fqdn := hostname + "."
 
-	dnsService, err := dns.New(c)
+	ctx := context.Background()
+	dnsService, err := dns.NewService(ctx)
 	if err != nil {
+		slog.Error("Failed to initialize DNS client", "error", err)
 		http.Error(w, "Error: failed to initialize DNS client", http.StatusInternalServerError)
 		return
 	}
 
-	// get existing resource record to be updated,
-	// result may be empty if record is being created for first time
+	// Get existing resource record to be updated,
+	// result may be empty if record is being created for first time.
 	rrs, err := dnsService.ResourceRecordSets.List(project, conf.Zone).Name(fqdn).Do()
 	if err != nil {
+		slog.Error("Failed to fetch existing resource record", "fqdn", fqdn, "error", err)
 		http.Error(w, "Error: failed to fetch existing resource record", http.StatusInternalServerError)
 		return
 	}
 
-	// update resource record with the new address
+	// Update resource record with the new address.
 	rb := &dns.Change{
 		Deletions: rrs.Rrsets,
 		Additions: []*dns.ResourceRecordSet{
-			&dns.ResourceRecordSet{
+			{
 				Name:    fqdn,
 				Rrdatas: []string{addr},
 				Ttl:     300,
@@ -110,12 +136,16 @@ func Update(w http.ResponseWriter, r *http.Request) {
 
 	_, err = dnsService.Changes.Create(project, conf.Zone, rb).Context(ctx).Do()
 	if err != nil {
+		slog.Error("Failed to update resource record", "error", err)
 		http.Error(w, "Error: failed to update resource record", http.StatusInternalServerError)
 		return
 	}
 
+	resp := &Response{
+		Hostname: hostname,
+		Address:  addr,
+	}
+	jsonResp, _ := json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, "{\n    \"hostname\": \"%s\",\n    \"address\": \"%s\"\n}\n",
-		hostname,
-		addr)
+	w.Write(jsonResp)
 }
