@@ -179,6 +179,12 @@ sudo systemctl start dyndns.timer
 sudo systemctl status dyndns.{service,timer}
 ```
 
+### Build container image for the updater client
+
+```bash
+podman build -t quay.io/tsaarni/dyndns-updater:latest .
+```
+
 ## Local development and testing
 
 Following instructions are meant for testing the code locally.
