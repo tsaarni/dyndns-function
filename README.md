@@ -44,7 +44,7 @@ Prepare configuration file for the cloud function:
 ```bash
 cat > configuration.json <<'EOF'
 {
-    "clouddns_zone": "myzone",
+    "clouddns_zone": "my-dns-zone",
     "allowed_hosts": [
         ".+\\.example.com$"
     ]
@@ -181,9 +181,15 @@ sudo systemctl status dyndns.{service,timer}
 
 ### Build container image for the updater client
 
+Build the container image:
+
 ```bash
 podman build -t quay.io/tsaarni/dyndns-updater:latest .
 ```
+
+When running the updater as container, the key file must be mounted as volume.
+
+To keep the container running on the background to update the DNS record periodically, start the updater with `--update-every=24h` option.
 
 ## Local development and testing
 

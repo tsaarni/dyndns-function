@@ -1,21 +1,9 @@
-// Package main provides the entry point for the updater command-line tool.
-// This tool is used to update the IP address associated with a given hostname
-// by calling a cloud function.
+// This package implements updater command-line tool to update the IP address
+// associated with a given hostname. It calls the REST API defined by the
+// github.com/tsaarni/dyndns package.
 //
-// The tool reads the configuration from command-line flags and makes an HTTP
-// request to the specified cloud function URL, passing the hostname as a query
-// parameter. The response from the cloud function is then decoded and printed
-// to the console.
-//
-// The configuration is expected to be provided through the following command-line
-// flags:
-//
-//	-hostname: The hostname to update.
-//	-key-file: The path to the key file used for authentication.
-//	-function-url: The URL of the cloud function to call.
-//
-// If any of the required flags are missing, an error message is printed to
-// the standard error stream and the tool exits with a non-zero status code.
+// By default the tool updates the IP address once and exits. It can also be
+// used to update the IP address periodically.
 //
 // The tool uses the Google Cloud Identity Token API to authenticate the
 // HTTP request to the cloud function. The authentication is performed using
@@ -30,15 +18,17 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"google.golang.org/api/idtoken"
 	"google.golang.org/api/option"
 )
 
 type configuration struct {
-	FunctionURL string `json:"function_url"`
-	KeyFile     string `json:"key_file"`
-	Hostname    string `json:"hostname"`
+	URL         string
+	KeyFile     string
+	Hostname    string
+	UpdateEvery time.Duration
 }
 
 type Response struct {
@@ -46,45 +36,65 @@ type Response struct {
 	Address  string `json:"address"`
 }
 
-func main() {
-	conf := &configuration{}
-
-	flag.StringVar(&conf.Hostname, "hostname", "", "Hostname")
-	flag.StringVar(&conf.KeyFile, "key-file", "", "Key file")
-	flag.StringVar(&conf.FunctionURL, "function-url", "", "Function URL")
-
-	flag.Parse()
-
-	if conf.Hostname == "" || conf.KeyFile == "" || conf.FunctionURL == "" {
-		fmt.Fprintln(os.Stderr, "Missing required arguments")
-		flag.Usage()
-		os.Exit(1)
-	}
-
+func update(conf *configuration) error {
 	ctx := context.Background()
-	client, err := idtoken.NewClient(ctx, conf.FunctionURL, option.WithCredentialsFile(conf.KeyFile))
+	client, err := idtoken.NewClient(ctx, conf.URL, option.WithCredentialsFile(conf.KeyFile))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error creating client", err)
-		os.Exit(1)
+		return err
 	}
 
-	resp, err := client.Get(fmt.Sprintf("%s?hostname=%s", conf.FunctionURL, conf.Hostname))
+	resp, err := client.Get(fmt.Sprintf("%s?hostname=%s", conf.URL, conf.Hostname))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error calling cloud function", err)
-		os.Exit(1)
+		return err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintln(os.Stderr, "Error calling cloud function", resp.Status)
-		os.Exit(1)
+		return fmt.Errorf("Error calling cloud function: %s", resp.Status)
 	}
 
 	var r Response
 	err = json.NewDecoder(resp.Body).Decode(&r)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error decoding response", err)
-		os.Exit(1)
+		return err
 	}
 
 	fmt.Println("Updated", r.Hostname, "to", r.Address)
+
+	return nil
+}
+
+func main() {
+	conf := &configuration{}
+
+	flag.StringVar(&conf.Hostname, "hostname", "", "Hostname")
+	flag.StringVar(&conf.KeyFile, "key-file", "", "Key file")
+	flag.StringVar(&conf.URL, "url", "", "URL of the cloud function to call")
+	flag.DurationVar(&conf.UpdateEvery, "update-every", 0, "Update periodically. Duration is e.g. 240m, 24h (default: update once and exit)")
+
+	flag.Parse()
+
+	if conf.Hostname == "" || conf.KeyFile == "" || conf.URL == "" {
+		fmt.Fprintln(os.Stderr, "Missing required arguments")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if conf.UpdateEvery == 0 {
+		err := update(conf)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	} else {
+		for {
+			err := update(conf)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+
+			fmt.Println("Sleeping for", conf.UpdateEvery)
+			time.Sleep(conf.UpdateEvery)
+		}
+	}
+
 }
