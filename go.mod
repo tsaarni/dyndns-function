@@ -4,7 +4,6 @@ go 1.21
 
 require (
 	github.com/GoogleCloudPlatform/functions-framework-go v1.8.0
-	golang.org/x/oauth2 v0.15.0
 	google.golang.org/api v0.153.0
 )
 
@@ -13,7 +12,6 @@ require (
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	cloud.google.com/go/functions v1.15.1 // indirect
 	github.com/cloudevents/sdk-go/v2 v2.14.0 // indirect
-	github.com/golang-jwt/jwt/v5 v5.2.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
@@ -29,6 +27,7 @@ require (
 	go.uber.org/zap v1.10.0 // indirect
 	golang.org/x/crypto v0.16.0 // indirect
 	golang.org/x/net v0.19.0 // indirect
+	golang.org/x/oauth2 v0.15.0 // indirect
 	golang.org/x/sys v0.15.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
