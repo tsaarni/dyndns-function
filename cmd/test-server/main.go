@@ -1,3 +1,5 @@
+// The test server is used to test the cloud function locally.
+
 package main
 
 import (

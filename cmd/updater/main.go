@@ -1,3 +1,26 @@
+// Package main provides the entry point for the updater command-line tool.
+// This tool is used to update the IP address associated with a given hostname
+// by calling a cloud function.
+//
+// The tool reads the configuration from command-line flags and makes an HTTP
+// request to the specified cloud function URL, passing the hostname as a query
+// parameter. The response from the cloud function is then decoded and printed
+// to the console.
+//
+// The configuration is expected to be provided through the following command-line
+// flags:
+//
+//	-hostname: The hostname to update.
+//	-key-file: The path to the key file used for authentication.
+//	-function-url: The URL of the cloud function to call.
+//
+// If any of the required flags are missing, an error message is printed to
+// the standard error stream and the tool exits with a non-zero status code.
+//
+// The tool uses the Google Cloud Identity Token API to authenticate the
+// HTTP request to the cloud function. The authentication is performed using
+// the provided key file.
+
 package main
 
 import (
@@ -11,8 +34,6 @@ import (
 	"google.golang.org/api/idtoken"
 	"google.golang.org/api/option"
 )
-
-const serviceAccount = "dyndns-client"
 
 type configuration struct {
 	FunctionURL string `json:"function_url"`

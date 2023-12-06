@@ -1,7 +1,7 @@
 // Package dyndns provides functionality for updating DNS records on Google Cloud DNS.
 // It uses the Google Cloud DNS API to perform these updates.
 // The package is configured via environment variables and a configuration file.
-// It is intended to be used as a Cloud Function, with the entry point being the Update function.
+// It is used as a Cloud Function and it is invoked via HTTP requests.
 
 package dyndns
 
