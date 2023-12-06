@@ -5,6 +5,7 @@ go 1.21
 require (
 	github.com/GoogleCloudPlatform/functions-framework-go v1.8.0
 	google.golang.org/api v0.153.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

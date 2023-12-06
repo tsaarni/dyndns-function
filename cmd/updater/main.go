@@ -22,13 +22,14 @@ import (
 
 	"google.golang.org/api/idtoken"
 	"google.golang.org/api/option"
+	"gopkg.in/yaml.v3"
 )
 
 type configuration struct {
-	URL         string
-	KeyFile     string
-	Hostname    string
-	UpdateEvery time.Duration
+	URL         string        `yaml:"url"`
+	KeyFile     string        `yaml:"key-file"`
+	Hostname    string        `yaml:"hostname"`
+	UpdateEvery time.Duration `yaml:"update-every"`
 }
 
 type Response struct {
@@ -66,12 +67,30 @@ func update(conf *configuration) error {
 func main() {
 	conf := &configuration{}
 
+	// Parameters can be provided in a configuration file or as command-line arguments.
+	var configFile string
+
+	flag.StringVar(&configFile, "config", "", "Configuration file (YAML)")
 	flag.StringVar(&conf.Hostname, "hostname", "", "Hostname")
 	flag.StringVar(&conf.KeyFile, "key-file", "", "Key file")
 	flag.StringVar(&conf.URL, "url", "", "URL of the cloud function to call")
-	flag.DurationVar(&conf.UpdateEvery, "update-every", 0, "Update periodically. Duration is e.g. 240m, 24h (default: update once and exit)")
+	flag.DurationVar(&conf.UpdateEvery, "update-every", 0, "Update periodically. Duration is e.g. 24h (default: update once and exit)")
 
 	flag.Parse()
+
+	if configFile != "" {
+		bytes, err := os.ReadFile(configFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		err = yaml.Unmarshal(bytes, conf)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 
 	if conf.Hostname == "" || conf.KeyFile == "" || conf.URL == "" {
 		fmt.Fprintln(os.Stderr, "Missing required arguments")

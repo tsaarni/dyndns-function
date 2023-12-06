@@ -8,5 +8,6 @@ RUN go build cmd/updater/main.go
 
 # Copy the binary from the build container to the final container
 FROM scratch
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /src/main /updater
 CMD ["./updater"]
